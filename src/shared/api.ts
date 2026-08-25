@@ -1,24 +1,16 @@
 /** Generic error detail for all responses. */
 export type ErrorRsp = {error: string; status: number}
 
-/** The current counter state for this post. */
-export type GetCounterRsp = {count: number}
-
-/** Increment the post counter by a signed amount. */
-export type IncCounterReq = {amount: number}
-export type IncCounterRsp = {count: number}
-
 export type Endpoint = (typeof Endpoint)[keyof typeof Endpoint]
 export const Endpoint = {
-  GetCounter: 'api/counter',
-  IncCounter: 'api/counter/inc',
-  OnAppInstall: 'internal/on/app/install',
-  OnMenuNewPost: 'internal/on/menu/new-post',
+  OnPostCreate: 'internal/on/post/create',
+  OnMenuStats: 'internal/on/menu/stats',
+  /** Temporary: remove along with src/server/seed/ after the cutover import. */
+  OnMenuImportSeed: 'internal/on/menu/import-seed',
 } as const
 
 export const EndpointMethod = {
-  [Endpoint.GetCounter]: 'GET',
-  [Endpoint.IncCounter]: 'POST',
-  [Endpoint.OnAppInstall]: 'POST',
-  [Endpoint.OnMenuNewPost]: 'POST',
+  [Endpoint.OnPostCreate]: 'POST',
+  [Endpoint.OnMenuStats]: 'POST',
+  [Endpoint.OnMenuImportSeed]: 'POST',
 } as const satisfies {[endpoint: string]: 'GET' | 'POST'}

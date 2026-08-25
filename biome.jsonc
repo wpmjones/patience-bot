@@ -1,7 +1,17 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.5.1/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.5.5/schema.json",
   "css": {"formatter": {"enabled": true, "quoteStyle": "single"}},
-  "files": {"includes": ["**", "!dist/", "!public/*.js*"]},
+  "files": {
+    "includes": [
+      "**",
+      "!dist/",
+      "!public/*.js*",
+      // Generated, not hand-edited. Its arrays are intentionally minified;
+      // formatting it would expand 562 records into several thousand lines.
+      // Delete this entry along with src/server/seed/ after the cutover import.
+      "!src/server/seed/seedData.ts"
+    ]
+  },
   "formatter": {
     "bracketSpacing": false,
     "enabled": true,
@@ -27,7 +37,7 @@
       "nursery": {
         "noFloatingPromises": "error",
         "noMisusedPromises": "error",
-        "recommended": true
+        "preset": "recommended"
       },
       "style": {"noInferrableTypes": "off"},
       "suspicious": {"noImplicitAnyLet": "off"}

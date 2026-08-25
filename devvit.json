@@ -1,31 +1,62 @@
 {
   "$schema": "https://developers.reddit.com/schema/config-file.v1.json",
   "name": "patience-bot",
-  "post": {
-    "entrypoints": {
-      "default": {
-        "entry": "splash.html"
+  "server": {},
+  "permissions": {
+    "redis": true,
+    "reddit": {
+      "enable": true,
+      "scope": "moderator"
+    },
+    "http": {
+      "enable": true,
+      "domains": [
+        "cocproxy.royaleapi.dev",
+        "discord.com"
+      ]
+    }
+  },
+  "settings": {
+    "global": {
+      "cocApiToken": {
+        "type": "string",
+        "label": "Clash of Clans API token",
+        "helpText": "Created at developer.clashofclans.com with 45.79.218.79 (the RoyaleAPI proxy) in the allowed IP list.",
+        "isSecret": true
       },
-      "game": {
-        "entry": "game.html"
+      "discordWebhookUrl": {
+        "type": "string",
+        "label": "Discord webhook URL",
+        "helpText": "Where moderator notifications are sent. Point this at the private test channel until go-live, then switch it to the mod channel.",
+        "isSecret": true
       }
     }
   },
-  "server": {},
+  "triggers": {
+    "onPostCreate": "/internal/on/post/create"
+  },
   "menu": {
     "items": [
       {
-        "label": "[patience-bot] New Post",
-        "description": "Create a new patience-bot post.",
+        "label": "[patience-bot] Stats",
+        "description": "How many clans and redditors the bot is tracking.",
+        "forUserType": "moderator",
         "location": "subreddit",
-        "endpoint": "/internal/on/menu/new-post"
+        "endpoint": "/internal/on/menu/stats"
+      },
+      {
+        "label": "[patience-bot] Import seed data",
+        "description": "One-time import of the old bot's history. Run until it reports complete.",
+        "forUserType": "moderator",
+        "location": "subreddit",
+        "endpoint": "/internal/on/menu/import-seed"
       }
     ]
   },
-  "triggers": {
-    "onAppInstall": "/internal/on/app/install"
-  },
   "scripts": {
     "dev": "npm run watch"
+  },
+  "dev": {
+    "subreddit": "patience_bot_dev"
   }
 }
