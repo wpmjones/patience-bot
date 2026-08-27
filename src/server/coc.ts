@@ -17,8 +17,46 @@ const PROXY_BASE = 'https://cocproxy.royaleapi.dev/v1'
 /** Devvit caps fetch at 30s; fail sooner so a trigger doesn't hang on one call. */
 const TIMEOUT_MS = 10_000
 
-/** Global secret in devvit.json. */
-export const TOKEN_SETTING = 'cocApiToken'
+/**
+ * The token is stored across three global secrets and rejoined here.
+ *
+ * Reddit caps a `string` setting at 250 characters, and `isSecret` is only
+ * available on `string` — `paragraph` takes longer values but cannot be marked
+ * secret. A Clash of Clans JWT is around 570 characters, so splitting it is the
+ * only way to keep it masked. Empty parts are skipped, so a shorter token that
+ * fits in one or two still works.
+ */
+export const TOKEN_SETTINGS = [
+  'cocApiToken1',
+  'cocApiToken2',
+  'cocApiToken3',
+] as const
+
+/** Every Clash of Clans JWT begins with this; used to catch a bad reassembly. */
+const JWT_PREFIX = 'eyJ'
+
+async function readToken(): Promise<
+  {ok: true; token: string} | {ok: false; message: string}
+> {
+  const parts = await Promise.all(
+    TOKEN_SETTINGS.map(async name => (await settings.get<string>(name)) ?? ''),
+  )
+  const token = parts.map(part => part.trim()).join('')
+
+  if (token === '') {
+    return {ok: false, message: `no token configured (${TOKEN_SETTINGS[0]}…)`}
+  }
+  if (!token.startsWith(JWT_PREFIX)) {
+    // Almost always a part pasted out of order, or part 1 left unset.
+    return {
+      ok: false,
+      message:
+        'the assembled token is not a JWT — check the parts are in order ' +
+        'and none is missing',
+    }
+  }
+  return {ok: true, token}
+}
 
 export type Clan = {
   tag: string
@@ -43,17 +81,15 @@ export type ClanLookup =
   | {kind: 'error'; message: string}
 
 export async function lookupClan(clanTag: string): Promise<ClanLookup> {
-  const token = await settings.get<string>(TOKEN_SETTING)
-  if (token == null || token === '') {
-    return {kind: 'unauthorized', message: `${TOKEN_SETTING} is not configured`}
-  }
+  const token = await readToken()
+  if (!token.ok) return {kind: 'unauthorized', message: token.message}
 
   const url = `${PROXY_BASE}/clans/${encodeURIComponent(clanTag)}`
 
   let rsp: Response
   try {
     rsp = await fetch(url, {
-      headers: {Authorization: `Bearer ${token}`},
+      headers: {Authorization: `Bearer ${token.token}`},
       signal: AbortSignal.timeout(TIMEOUT_MS),
     })
   } catch (err) {

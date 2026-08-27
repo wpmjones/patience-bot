@@ -6,13 +6,9 @@ import type {
   UiResponse,
 } from '@devvit/web/shared'
 import {Endpoint, EndpointMethod, type ErrorRsp} from '../shared/api.ts'
-import {
-  absoluteUrl,
-  extractClanTagCandidates,
-  parseCategory,
-} from '../shared/parse.ts'
 import {getStats} from './db.ts'
 import type {PostCreateEvent} from './events.ts'
+import {handlePostCreate} from './handlePost.ts'
 import {runSeed} from './seed/importSeed.ts'
 import {
   SEED_AUTHORS,
@@ -68,30 +64,25 @@ async function route(
 }
 
 /**
- * Observe-only. Parses the title and logs what it found — no Redis writes, no
- * removals, no messages. The point is to check the parsers against live traffic
- * before anything is allowed to act on them.
+ * Currently OBSERVE-ONLY: every rule runs and Discord reports what would have
+ * happened, but no post is removed or reported and no author is contacted.
+ * Flip OBSERVE_ONLY to false to arm it — see the shadow-run step in the readme.
  */
+const OBSERVE_ONLY = true
+
 async function routePostCreate(
   reqMsg: IncomingMessage,
 ): Promise<TriggerResponse> {
-  const {post, author} = await readJson<PostCreateEvent>(reqMsg)
+  const event = await readJson<PostCreateEvent>(reqMsg)
 
-  const category = parseCategory(post.title)
-  const clanTags = extractClanTagCandidates(post.title)
+  const summary = await handlePostCreate(event, {
+    observeOnly: OBSERVE_ONLY,
+    now: Date.now(),
+  })
 
   console.log(
-    `[onPostCreate] ${JSON.stringify({
-      postId: post.id,
-      author: author?.name ?? '[deleted]',
-      created: new Date(post.createdAt).toISOString(),
-      title: post.title,
-      category,
-      clanTags,
-      url: absoluteUrl(post.permalink),
-    })}`,
+    `[onPostCreate] ${event.post.id} ${summary} :: ${event.post.title}`,
   )
-
   return {}
 }
 

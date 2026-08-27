@@ -8,7 +8,6 @@ import {
   extractClanTagCandidates,
   extractTownHallLevel,
   formatTimeRemaining,
-  fuzzyContains,
   literalClanTag,
   normalizeClanTag,
   parseCategory,
@@ -146,22 +145,61 @@ test('extracts Town Hall level for Searching posts', () => {
   )
 })
 
-test('fuzzyContains matches approximately, like fuzzysearch', () => {
-  assert.equal(fuzzyContains('black water', 'the black water clan', 0), true)
-  assert.equal(fuzzyContains('black water', 'the blackwater clan', 1), true)
-  assert.equal(fuzzyContains('black water', 'the blak water clan', 1), true)
-  assert.equal(fuzzyContains('black water', 'totally different', 2), false)
-  assert.equal(fuzzyContains('', 'anything', 0), true)
-})
-
 test('finds the clan name in a live title', () => {
   assert.equal(titleContainsClanName('Black Water', LIVE_TITLE), true)
   assert.equal(
-    titleContainsClanName('Black Water', '[Recruiting] BlackWater'),
+    titleContainsClanName('Black Water', '[Recruiting] Reddit Warriors'),
+    false,
+  )
+})
+
+test('a digit swapped for a letter is NOT the same clan name', () => {
+  // The case that got through fuzzy matching: "Reddit Omega" is 12 characters,
+  // so a one-edit-per-four budget allowed both the O->0 and the e->3.
+  assert.equal(
+    titleContainsClanName(
+      'Reddit Omega',
+      '[Recruiting] Reddit 0m3ga | #UQV9LLY | Wrong name',
+    ),
+    false,
+  )
+  assert.equal(
+    titleContainsClanName(
+      'Reddit Omega',
+      '[Recruiting] Reddit Omega | #UQV9LLY',
+    ),
+    true,
+  )
+})
+
+test('presentation differences are still forgiven', () => {
+  // Case, spacing, and a curly apostrophe against the API's straight one.
+  assert.equal(
+    titleContainsClanName('Black Water', '[Recruiting] BLACKWATER'),
     true,
   )
   assert.equal(
-    titleContainsClanName('Black Water', '[Recruiting] Reddit Warriors'),
+    titleContainsClanName(
+      "G3's Clan",
+      '[Recruiting] G3\u2019s Clan | #2YJJUVG0C',
+    ),
+    true,
+  )
+  // Full-width characters fold to their plain forms under NFKC.
+  assert.equal(
+    titleContainsClanName(
+      'Incognito',
+      '[Recruiting] \uff29\uff4e\uff43\uff4f\uff47\uff4e\uff49\uff54\uff4f | #2QG8VVGJU',
+    ),
+    true,
+  )
+})
+
+test('a typo in the clan name goes to the moderators', () => {
+  // Deliberately strict: a dropped letter is indistinguishable from an
+  // impersonation attempt, so both get a human look.
+  assert.equal(
+    titleContainsClanName('Black Water', '[Recruiting] Black Watr'),
     false,
   )
 })

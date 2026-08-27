@@ -1,18 +1,27 @@
 import assert from 'node:assert/strict'
 import {afterEach, beforeEach, test} from 'node:test'
 import {settings} from '@devvit/web/server'
-import {lookupClan, resolveClan, TOKEN_SETTING} from './coc.ts'
+import {lookupClan, resolveClan, TOKEN_SETTINGS} from './coc.ts'
 
 const realFetch = globalThis.fetch
 let calls: string[] = []
+let authHeaders: string[] = []
 
 /** Queue one response per expected call, in order. */
 function stubFetch(
   responses: readonly ({status: number; body?: unknown} | {throws: string})[],
 ): void {
   let n = 0
-  globalThis.fetch = (async (url: string | URL | Request) => {
+  globalThis.fetch = (async (
+    url: string | URL | Request,
+    init?: RequestInit,
+  ) => {
     calls.push(String(url))
+    authHeaders.push(
+      String(
+        (init?.headers as Record<string, string> | undefined)?.Authorization,
+      ),
+    )
     const next = responses[n++]
     if (next == null) throw new Error(`unexpected fetch call ${n}: ${url}`)
     if ('throws' in next) throw new Error(next.throws)
@@ -29,13 +38,23 @@ function stubFetch(
 
 beforeEach(() => {
   calls = []
-  settings.get = (async (name: string) =>
-    name === TOKEN_SETTING ? 'test-token' : undefined) as typeof settings.get
+  authHeaders = []
+  // A realistic three-part split of a JWT-shaped token.
+  setTokenParts(['eyJ0eXAiOiJKV1Qi', 'LCJhbGciOiJIUzI1', 'NiJ9.payload.sig'])
 })
 
 afterEach(() => {
   globalThis.fetch = realFetch
 })
+
+function setTokenParts(parts: readonly (string | undefined)[]): void {
+  settings.get = (async (name: string) => {
+    const index = TOKEN_SETTINGS.indexOf(
+      name as (typeof TOKEN_SETTINGS)[number],
+    )
+    return index === -1 ? undefined : parts[index]
+  }) as typeof settings.get
+}
 
 const BLACK_WATER = {
   tag: '#29LRRULU',
@@ -88,10 +107,43 @@ test('a network failure is an error, not a bad tag', async () => {
 })
 
 test('a missing token fails closed', async () => {
-  settings.get = (async () => undefined) as typeof settings.get
+  setTokenParts([undefined, undefined, undefined])
   const result = await lookupClan('#29LRRULU')
   assert.equal(result.kind, 'unauthorized')
   assert.equal(calls.length, 0, 'must not call the API without a token')
+})
+
+test('the three parts are rejoined in order', async () => {
+  stubFetch([{status: 200, body: BLACK_WATER}])
+  setTokenParts(['eyJaaa', 'bbb', 'ccc'])
+  await lookupClan('#29LRRULU')
+  assert.equal(authHeaders[0], 'Bearer eyJaaabbbccc')
+})
+
+test('whitespace around a pasted part is trimmed', async () => {
+  stubFetch([{status: 200, body: BLACK_WATER}])
+  setTokenParts(['  eyJaaa ', ' bbb', 'ccc  '])
+  await lookupClan('#29LRRULU')
+  assert.equal(authHeaders[0], 'Bearer eyJaaabbbccc')
+})
+
+test('a token that fits in fewer parts still works', async () => {
+  stubFetch([{status: 200, body: BLACK_WATER}])
+  setTokenParts(['eyJshort.token.sig', undefined, undefined])
+  const result = await lookupClan('#29LRRULU')
+  assert.equal(result.kind, 'found')
+})
+
+test('a misassembled token is caught before it reaches the API', async () => {
+  // Parts out of order, or part 1 left unset: the result is not a JWT.
+  setTokenParts(['bbb', 'eyJaaa', 'ccc'])
+  const result = await lookupClan('#29LRRULU')
+  assert.equal(result.kind, 'unauthorized')
+  assert.match(
+    result.kind === 'unauthorized' ? result.message : '',
+    /not a JWT/,
+  )
+  assert.equal(calls.length, 0, 'a bad assembly must not burn an API call')
 })
 
 test('an unexpected body shape is an error', async () => {

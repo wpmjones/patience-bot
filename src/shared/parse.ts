@@ -202,65 +202,48 @@ function validLevel(level: number): number | undefined {
 }
 
 /**
- * Approximate substring search — the equivalent of Python's
- * `fuzzysearch.find_near_matches(needle, haystack, max_l_dist=maxDistance)`.
+ * Fold away differences in how text is *rendered*, while leaving differences
+ * in what the characters actually *are*.
  *
- * Sellers' algorithm: a Levenshtein DP whose first row is all zeros, so a match
- * may begin at any offset in the haystack. Returns true as soon as some
- * substring of `haystack` is within `maxDistance` edits of `needle`.
+ * NFKC collapses full-width and compatibility forms, so the clan displayed as
+ * "Ｉｎｃｏｇｎｉｔｏ" matches "Incognito". Curly quotes, typographic dashes,
+ * case and whitespace are all presentational and get normalised too — the API
+ * returns "G3\'s Clan" with a straight apostrophe while a phone keyboard types
+ * a curly one, and neither is a different name.
+ *
+ * Digit-for-letter swaps are deliberately NOT folded. "Reddit 0m3ga" is not
+ * "Reddit Omega": it is a different string that happens to look similar, and
+ * telling those apart is the entire point of this check.
  */
-export function fuzzyContains(
-  needle: string,
-  haystack: string,
-  maxDistance: number,
-): boolean {
-  const n = needle.length
-  if (n === 0) return true
-  // Every character could be deleted, so the empty substring already matches.
-  if (maxDistance >= n) return true
-
-  let prev = new Int32Array(n + 1)
-  let cur = new Int32Array(n + 1)
-  for (let i = 0; i <= n; i++) prev[i] = i
-
-  for (let j = 0; j < haystack.length; j++) {
-    const hc = haystack.charCodeAt(j)
-    cur[0] = 0
-    let last = 0
-    for (let i = 1; i <= n; i++) {
-      const cost = needle.charCodeAt(i - 1) === hc ? 0 : 1
-      const del = (prev[i] ?? 0) + 1
-      const ins = (cur[i - 1] ?? 0) + 1
-      const sub = (prev[i - 1] ?? 0) + cost
-      last = Math.min(del, ins, sub)
-      cur[i] = last
-    }
-    if (last <= maxDistance) return true
-    const swap = prev
-    prev = cur
-    cur = swap
-  }
-  return false
+function foldForComparison(text: string): string {
+  return text
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[\u2018\u2019\u02bc\u2032\u00b4`]/g, "'")
+    .replace(/[\u201c\u201d\u2033]/g, '"')
+    .replace(/[\u2010-\u2015]/g, '-')
+    .replace(/\s+/g, '')
 }
 
 /**
- * Does the title contain the clan's name?
+ * Does the title contain the clan's name, exactly?
  *
- * The rules say "exact clan name", but enforcing that literally would remove
- * posts over a stray apostrophe or emoji, so this allows one edit per four
- * characters — the same tolerance the Python bot used in practice.
+ * This used to allow one edit per four characters, which let "Reddit 0m3ga"
+ * pass as "Reddit Omega" — two character substitutions inside a three-edit
+ * budget. Approximate matching cannot distinguish a harmless typo from a
+ * deliberate impersonation, so it does not try: anything that is not the name
+ * goes to the moderators, who can approve it in a click.
+ *
+ * Clans whose real name can never appear in a title — emoji-only names, blank
+ * names, non-Latin alphabets — belong on the weird-clan exempt list instead.
  */
 export function titleContainsClanName(
   clanName: string,
   title: string,
 ): boolean {
-  const needle = clanName.trim().toLowerCase()
-  if (!needle) return false
-  return fuzzyContains(
-    needle,
-    title.toLowerCase(),
-    Math.floor(needle.length / 4),
-  )
+  const needle = foldForComparison(clanName)
+  if (needle === '') return false
+  return foldForComparison(title).includes(needle)
 }
 
 /** "3 days, 4 hours, 12 minutes" — the wording used in removal comments. */

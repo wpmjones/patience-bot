@@ -2,14 +2,20 @@ import assert from 'node:assert/strict'
 import {createServer} from 'node:http'
 import type {AddressInfo, Server} from 'node:net'
 import {after, before, test} from 'node:test'
-import {type Context, runWithContext} from '@devvit/web/server'
+import {type Context, redis, runWithContext, settings} from '@devvit/web/server'
 import {Endpoint, type ErrorRsp} from '../shared/api.ts'
+import {createRedisFake} from '../test/redisFake.ts'
 import {onReq} from './server.ts'
 
 let server: Server
 let serverURL: string
 
 before(async () => {
+  // The trigger now runs the full decision pipeline, so give it a store and
+  // leave the webhook unset — notifyMods becomes a no-op rather than a fetch.
+  Object.assign(redis, createRedisFake())
+  settings.get = (async () => undefined) as typeof settings.get
+
   server = createServer(async (req, rsp) => {
     await runWithContext(
       {
