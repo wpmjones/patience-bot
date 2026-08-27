@@ -17,19 +17,19 @@
     "global": {
       "cocApiToken1": {
         "type": "string",
-        "label": "Clash of Clans API token — part 1 of 3",
+        "label": "Clash of Clans API token \u2014 part 1 of 3",
         "helpText": "The JWT from developer.clashofclans.com, created with 45.79.218.79 (the RoyaleAPI proxy) in its allowed IP list. Split into three because a string setting caps at 250 characters and only string settings can be secret. Part 1 starts with 'eyJ'.",
         "isSecret": true
       },
       "cocApiToken2": {
         "type": "string",
-        "label": "Clash of Clans API token — part 2 of 3",
+        "label": "Clash of Clans API token \u2014 part 2 of 3",
         "helpText": "Characters 201-400 of the token. Order matters.",
         "isSecret": true
       },
       "cocApiToken3": {
         "type": "string",
-        "label": "Clash of Clans API token — part 3 of 3",
+        "label": "Clash of Clans API token \u2014 part 3 of 3",
         "helpText": "The remainder of the token. Leave blank if the token fits in fewer parts.",
         "isSecret": true
       },
@@ -42,7 +42,8 @@
     }
   },
   "triggers": {
-    "onPostCreate": "/internal/on/post/create"
+    "onPostCreate": "/internal/on/post/create",
+    "onModAction": "/internal/on/mod/action"
   },
   "menu": {
     "items": [
@@ -59,10 +60,28 @@
         "forUserType": "moderator",
         "location": "subreddit",
         "endpoint": "/internal/on/menu/import-seed"
+      },
+      {
+        "label": "[patience-bot] Exempt clan from name check",
+        "description": "Stop removing this clan's posts for a name the bot can't read.",
+        "forUserType": "moderator",
+        "location": ["post", "subreddit"],
+        "endpoint": "/internal/on/menu/exempt-clan"
+      },
+      {
+        "label": "[patience-bot] Exempt clan list",
+        "description": "Review the clans exempt from the name check, and remove entries.",
+        "forUserType": "moderator",
+        "location": "subreddit",
+        "endpoint": "/internal/on/menu/weird-clans"
       }
     ]
   },
   "scripts": {
     "dev": "npm run watch"
+  },
+  "forms": {
+    "exemptClan": "/internal/on/form/exempt-clan",
+    "weirdClans": "/internal/on/form/weird-clans"
   }
 }

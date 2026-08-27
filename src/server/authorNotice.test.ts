@@ -9,6 +9,7 @@ const ALL_REMOVALS: AuthorNotice[] = [
   {kind: 'missingCategory'},
   {kind: 'unknownCategory', raw: 'Event Recruiting'},
   {kind: 'badClanTag'},
+  {kind: 'clanNameMismatch', clanName: 'Black Water'},
   {kind: 'missingTownHall'},
 ]
 
@@ -106,6 +107,7 @@ beforeEach(() => {
   reddit.submitComment = (async (opts: {id: string; text: string}) => {
     comments.push(opts)
     return {
+      id: 't1_stub',
       distinguish: async () => {
         distinguished++
       },
@@ -133,7 +135,11 @@ const TARGET = {
 test('a removal comments, distinguishes, and messages as the subreddit', async () => {
   const result = await sendNotice({kind: 'missingCategory'}, TARGET)
 
-  assert.deepEqual(result, {commented: true, messaged: true})
+  assert.deepEqual(result, {
+    commented: true,
+    messaged: true,
+    commentId: 't1_stub',
+  })
   assert.equal(comments.length, 1)
   assert.equal(comments[0]?.id, 't3_1vxn7fs')
   assert.equal(distinguished, 1)
@@ -154,13 +160,21 @@ test('a tag-typo notice comments without messaging', async () => {
     },
     TARGET,
   )
-  assert.deepEqual(result, {commented: true, messaged: false})
+  assert.deepEqual(result, {
+    commented: true,
+    messaged: false,
+    commentId: 't1_stub',
+  })
   assert.equal(messages.length, 0)
 })
 
 test('the welcome sends a message and never comments', async () => {
   const result = await sendNotice({kind: 'welcome'}, TARGET)
-  assert.deepEqual(result, {commented: false, messaged: true})
+  assert.deepEqual(result, {
+    commented: false,
+    messaged: true,
+    commentId: undefined,
+  })
   assert.equal(comments.length, 0)
 })
 
@@ -170,7 +184,11 @@ test('a blocked-DM user still gets the comment', async () => {
   }) as typeof reddit.sendPrivateMessageAsSubreddit
 
   const result = await sendNotice({kind: 'badClanTag'}, TARGET)
-  assert.deepEqual(result, {commented: true, messaged: false})
+  assert.deepEqual(result, {
+    commented: true,
+    messaged: false,
+    commentId: 't1_stub',
+  })
   assert.equal(comments.length, 1)
 })
 
@@ -180,7 +198,12 @@ test('a failed comment does not suppress the message', async () => {
   }) as unknown as typeof reddit.submitComment
 
   const result = await sendNotice({kind: 'badClanTag'}, TARGET)
-  assert.deepEqual(result, {commented: false, messaged: true})
+  // No comment id to report, so nothing to withdraw if this is later approved.
+  assert.deepEqual(result, {
+    commented: false,
+    messaged: true,
+    commentId: undefined,
+  })
   assert.equal(messages.length, 1)
 })
 
@@ -197,5 +220,17 @@ test('both failing is reported, never thrown', async () => {
     {kind: 'cooldown', category: Category.Searching, timeRemaining: '1 day'},
     TARGET,
   )
-  assert.deepEqual(result, {commented: false, messaged: false})
+  assert.deepEqual(result, {
+    commented: false,
+    messaged: false,
+    commentId: undefined,
+  })
+})
+
+test('the clan-name removal names all three likely causes', () => {
+  const text = buildNotice({kind: 'clanNameMismatch', clanName: 'Black Water'})
+  assert.match(String(text.comment), /Black Water/)
+  assert.match(String(text.comment), /player.{0,20}tag/i)
+  assert.match(String(text.comment), /mistyped/)
+  assert.match(String(text.comment), /exactly as it does in game/)
 })

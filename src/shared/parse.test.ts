@@ -7,12 +7,14 @@ import {
   extractClanTag,
   extractClanTagCandidates,
   extractTownHallLevel,
+  findProhibitedTerms,
   formatTimeRemaining,
   literalClanTag,
   normalizeClanTag,
   parseCategory,
   titleContainsClanName,
   titleSpellsTagCorrectly,
+  typedSpellingOf,
 } from './parse.ts'
 
 // A real title captured from an onPostCreate event.
@@ -63,7 +65,10 @@ test('requires the tag at the start of the title', () => {
   assert.deepEqual(parseCategory('No brackets here'), {kind: 'missing'})
 })
 
-test('rejects categories outside the rules, including Event Recruiting', () => {
+test('rejects categories outside the rules', () => {
+  // [Event Recruiting] was retired by the subreddit in 2026. It stays here as
+  // a case because the retired tag is exactly what long-time posters will keep
+  // typing from memory, and it must be rejected rather than silently allowed.
   assert.deepEqual(parseCategory('[Event Recruiting] my event'), {
     kind: 'unknown',
     raw: 'Event Recruiting',
@@ -242,7 +247,44 @@ test('detects when the title spells the clan tag wrong but recoverably', () => {
   )
 })
 
+test('the typed spelling quoted back to the author is the wrong one', () => {
+  // Shipped once quoting a normalised candidate, which printed the real tag on
+  // both sides of "your title lists X, but the actual tag is Y".
+  const typed = typedSpellingOf(
+    '[Recruiting] AK47#000 | #2GQO82YVP | TH12',
+    '#2GQ082YVP',
+  )
+  assert.equal(typed, '#2GQO82YVP')
+  assert.notEqual(typed, '#2GQ082YVP')
+})
+
+test('there is no typed spelling to quote when the title was already right', () => {
+  assert.equal(
+    typedSpellingOf('[Recruiting] x | #2gq082yvp | TH12', '#2GQ082YVP'),
+    undefined,
+  )
+  // A rescued tag never appeared in the title, so there is nothing to quote.
+  assert.equal(
+    typedSpellingOf('[Recruiting] C0C | #C0C', '#2QR0QVJ29'),
+    undefined,
+  )
+})
+
 test('literalClanTag leaves a letter O alone', () => {
   assert.equal(literalClanTag('#2GQO82YVP'), '#2GQO82YVP')
   assert.equal(normalizeClanTag('#2GQO82YVP'), '#2GQ082YVP')
+})
+
+test('rule terms are matched on word boundaries, not substrings', () => {
+  // "gemstone" and "buyer" would be false positives; "Gems" capitalised is not.
+  assert.deepEqual(findProhibitedTerms('we have a gemstone mine'), [])
+  assert.deepEqual(findProhibitedTerms('Free Gems for everyone'), ['gems'])
+  assert.deepEqual(findProhibitedTerms('trading accounts here'), ['trading'])
+  assert.deepEqual(findProhibitedTerms('a normal recruiting post'), [])
+})
+
+test('troop donations are deliberately not flagged', () => {
+  // The single most common phrase in a recruiting post; flagging it would
+  // bury the moderators in false positives.
+  assert.deepEqual(findProhibitedTerms('great donations, active war clan'), [])
 })

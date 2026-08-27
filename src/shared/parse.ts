@@ -169,6 +169,28 @@ export function titleSpellsTagCorrectly(
 }
 
 /**
+ * How the author actually spelled the tag that resolved to `realTag`.
+ *
+ * Quoting a normalised candidate back at the author is useless — normalisation
+ * is exactly what repaired the spelling, so the "wrong" tag and the right one
+ * print identically. This walks back to the raw substring, keeping every
+ * character the author typed except the cosmetic ones (case, punctuation, the
+ * leading #) that were never the complaint.
+ *
+ * Returns undefined when nothing in the title maps to `realTag` — a rescued
+ * tag, where there is no author spelling to quote.
+ */
+export function typedSpellingOf(
+  title: string,
+  realTag: string,
+): string | undefined {
+  const raw = rawClanTagMatches(title).find(
+    raw => normalizeClanTag(raw) === realTag && literalClanTag(raw) !== realTag,
+  )
+  return raw == null ? undefined : literalClanTag(raw)
+}
+
+/**
  * Town Hall level for [Searching] posts.
  *
  * Handles the common spellings (TH12, th 12, Town Hall 12, T.H. 12) and falls
@@ -270,4 +292,56 @@ export function absoluteUrl(pathOrUrl: string): string {
  */
 export function barePostId(id: string): string {
   return id.replace(/^t3_/, '')
+}
+
+/**
+ * Terms from the subreddit's no-trading rule:
+ *
+ *   "No buying, selling, trading, begging, giveaways, or gifting. No contests
+ *    or events which offer prizes... No buying or selling or transfer of
+ *    accounts, clans, gems, services, or other in game items."
+ *
+ * Written as stems so ordinary inflections are caught without listing each
+ * form. Deliberately narrow: "donations" is left out because troop donations
+ * are the single most common thing a recruiting post advertises, and flagging
+ * every one of them would bury the moderators.
+ */
+const PROHIBITED_PATTERNS: readonly string[] = [
+  'giveaways?',
+  'gift(?:ing|ed|s)?',
+  'buy(?:ing|s)?',
+  'sell(?:ing|s)?',
+  'trad(?:e|es|ing)',
+  'gems?',
+  'begging',
+]
+
+const PROHIBITED_RE = new RegExp(
+  `\\b(?:${PROHIBITED_PATTERNS.join('|')})\\b`,
+  'gi',
+)
+
+/**
+ * Find rule-violating terms in a post, ignoring any that are part of the clan's
+ * own name.
+ *
+ * Context is the whole difficulty here. A clan legitimately called "Gem
+ * Traders" would otherwise trip on two terms every time it posts, so its name
+ * is subtracted from the text before the search runs. What remains is prose the
+ * author actually wrote.
+ *
+ * This only ever routes a post to a human — the terms have innocent uses
+ * ("gem mine level 10") that no word list can distinguish from the real thing.
+ */
+export function findProhibitedTerms(text: string, clanName?: string): string[] {
+  let haystack = text.normalize('NFKC').toLowerCase()
+
+  const name = clanName?.normalize('NFKC').toLowerCase().trim()
+  if (name != null && name !== '') {
+    haystack = haystack.split(name).join(' ')
+  }
+
+  const found = new Set<string>()
+  for (const match of haystack.matchAll(PROHIBITED_RE)) found.add(match[0])
+  return [...found].sort()
 }

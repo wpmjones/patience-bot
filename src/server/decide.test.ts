@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
 import {test} from 'node:test'
-import {Category} from '../shared/parse.ts'
 import type {Clan, ClanResolution} from './coc.ts'
 import {COOLDOWN_MS} from './db.ts'
 import {type Deps, decide, type Effect, type PostFacts} from './decide.ts'
@@ -19,6 +18,7 @@ function facts(overrides: Partial<PostFacts> = {}): PostFacts {
   return {
     postId: 't3_new',
     title: '[Recruiting] Black Water | #29LRRULU | TH18 | Level 28 | War',
+    body: 'Active war clan, all welcome.',
     author: 'TubaKid44',
     createdAt: NOW,
     url: 'https://www.reddit.com/r/x/comments/new/',
@@ -64,6 +64,7 @@ test('a title with no category tag is removed', async () => {
 
 test('a category outside the rules is removed and quoted', async () => {
   const decision = await decide(
+    // A category the subreddit retired; posters still type it from memory.
     facts({title: '[Event Recruiting] come to my event'}),
     deps(),
   )
@@ -189,33 +190,74 @@ test('the cooldown is judged against the post time, not the clock', async () => 
   )
 })
 
-test('a missing clan name is reported to the mod queue, not removed', async () => {
+test('a clan name that cannot be confirmed is removed', async () => {
   const decision = await decide(
     facts({title: '[Recruiting] Totally Different | #29LRRULU | TH18'}),
     deps(),
   )
 
-  assert.equal(removalReason(decision.effects), undefined)
-  assert.ok(kinds(decision.effects).includes('report'))
-  const report = decision.effects.find(e => e.kind === 'report')
-  assert.match(report?.kind === 'report' ? report.reason : '', /Black Water/)
-  // Still tracked: the post is live, so it holds the clan's slot.
+  const removal = decision.effects.find(e => e.kind === 'remove')
+  assert.equal(
+    removal?.kind === 'remove' ? removal.reason.code : '',
+    'clanNameMismatch',
+  )
+  assert.equal(
+    removal?.kind === 'remove' && removal.reason.code === 'clanNameMismatch'
+      ? removal.reason.clanName
+      : '',
+    'Black Water',
+  )
+  // Untracked, so a corrected repost today is not blocked by this one.
   const record = decision.effects.find(e => e.kind === 'record')
-  assert.equal(record?.kind === 'record' ? record.record.tracked : false, true)
+  assert.equal(record?.kind === 'record' ? record.record.tracked : true, false)
 })
 
-test('a clan on the exempt list is never reported for its name', async () => {
+test('the removal carries the clan so Discord can show it', async () => {
+  const decision = await decide(
+    facts({title: '[Recruiting] Totally Different | #29LRRULU | TH18'}),
+    deps(),
+  )
+  const removal = decision.effects.find(e => e.kind === 'remove')
+  assert.equal(
+    removal?.kind === 'remove' ? removal.clan?.name : '',
+    'Black Water',
+  )
+})
+
+test('a clan on the exempt list survives an unconfirmable name', async () => {
   const decision = await decide(
     facts({title: '[Recruiting] Totally Different | #29LRRULU | TH18'}),
     deps({isWeirdClan: async () => true}),
   )
-  assert.ok(!kinds(decision.effects).includes('report'))
+  assert.equal(removalReason(decision.effects), undefined)
 })
+
+test('the name check runs before the cooldown, so a fix can be reposted', async () => {
+  // Otherwise a user correcting their title would be told to wait a week for
+  // the very post that was just removed for being wrong.
+  const decision = await decide(
+    facts({title: '[Recruiting] Totally Different | #29LRRULU | TH18'}),
+    deps({
+      lastTrackedForClan: async () => ({postId: 'old', created: NOW - 1000}),
+    }),
+  )
+  assert.equal(removalReason(decision.effects), 'clanNameMismatch')
+})
+
+// Black Water's tag has no zero in it, so it cannot be O-typo'd. Tag-repair
+// cases need a clan whose tag actually contains one — using Black Water here
+// let a broken decision pass, because the stub resolver ignores its argument.
+const WAR_CLAN: Clan = {
+  tag: '#2QR0QVJ29',
+  name: 'War Clan Inc.',
+  level: 4,
+  members: 30,
+}
 
 test('a repaired tag gets a comment when the title is otherwise fine', async () => {
   const decision = await decide(
-    facts({title: '[Recruiting] Black Water | #29LRRULO | TH18'}),
-    deps(),
+    facts({title: '[Recruiting] War Clan Inc. | #2QROQVJ29 | TH18'}),
+    deps({resolveClan: async () => ({kind: 'found', clan: WAR_CLAN})}),
   )
 
   const notice = decision.effects.find(e => e.kind === 'notice')
@@ -223,12 +265,42 @@ test('a repaired tag gets a comment when the title is otherwise fine', async () 
   assert.equal(removalReason(decision.effects), undefined)
 })
 
-test('a post already in the mod queue is not also nagged about its tag', async () => {
+test('the tag-typo comment quotes two different tags', async () => {
+  // Shipped once quoting the normalised candidate as the "typed" tag, so the
+  // comment read "your title lists #X, but the actual tag is #X".
+  const decision = await decide(
+    facts({title: '[Recruiting] War Clan Inc. | #2QROQVJ29 | TH18'}),
+    deps({resolveClan: async () => ({kind: 'found', clan: WAR_CLAN})}),
+  )
+
+  const notice = decision.effects.find(
+    e => e.kind === 'notice' && e.notice.kind === 'tagTypo',
+  )
+  assert.ok(notice?.kind === 'notice' && notice.notice.kind === 'tagTypo')
+  assert.equal(notice.notice.typed, '#2QROQVJ29')
+  assert.equal(notice.notice.actual, '#2QR0QVJ29')
+  assert.notEqual(notice.notice.typed, notice.notice.actual)
+})
+
+test('a rescued tag is not reported as a typo', async () => {
+  // #coc resolves via TAG_RESCUES, so nothing in the title is the author's
+  // misspelling of the real tag. Silence beats an incoherent comment.
+  const decision = await decide(
+    facts({title: '[Recruiting] War Clan Inc. #coc | TH18'}),
+    deps({resolveClan: async () => ({kind: 'found', clan: WAR_CLAN})}),
+  )
+  const notices = decision.effects.filter(
+    e => e.kind === 'notice' && e.notice.kind === 'tagTypo',
+  )
+  assert.deepEqual(notices, [])
+})
+
+test('a removed post is not also nagged about its tag', async () => {
   const decision = await decide(
     facts({title: '[Recruiting] Totally Different | #29LRRULO | TH18'}),
     deps(),
   )
-  assert.ok(kinds(decision.effects).includes('report'))
+  assert.equal(removalReason(decision.effects), 'clanNameMismatch')
   const notices = decision.effects.filter(e => e.kind === 'notice')
   assert.equal(notices.length, 0)
 })
@@ -317,4 +389,91 @@ test('a searching first-timer is welcomed too', async () => {
   )
   const notice = decision.effects.find(e => e.kind === 'notice')
   assert.equal(notice?.kind === 'notice' ? notice.notice.kind : '', 'welcome')
+})
+
+// --- rule terms ---
+
+test('a post mentioning selling goes to the mod queue, not removed', async () => {
+  const decision = await decide(
+    facts({body: 'DM me if you want to buy a maxed account, cheap gems too.'}),
+    deps(),
+  )
+
+  assert.equal(removalReason(decision.effects), undefined)
+  const report = decision.effects.find(e => e.kind === 'report')
+  assert.equal(
+    report?.kind === 'report' && report.flag.code === 'prohibitedTerms'
+      ? [...report.flag.terms].sort().join(',')
+      : '',
+    'buy,gems',
+  )
+})
+
+test('rule terms are found in the title as well as the body', async () => {
+  const decision = await decide(
+    facts({title: '[Recruiting] Black Water | #29LRRULU | free giveaways!'}),
+    deps(),
+  )
+  const report = decision.effects.find(e => e.kind === 'report')
+  assert.equal(
+    report?.kind === 'report' && report.flag.code === 'prohibitedTerms'
+      ? report.flag.terms.join(',')
+      : '',
+    'giveaways',
+  )
+})
+
+test("a rule term inside the clan's own name is ignored", async () => {
+  // "Gem Traders" would otherwise trip on two terms every single time it posts.
+  const decision = await decide(
+    facts({
+      title: '[Recruiting] Gem Traders | #29LRRULU | TH18',
+      body: 'Competitive war clan.',
+    }),
+    deps({
+      resolveClan: async () => ({
+        kind: 'found',
+        clan: {tag: '#29LRRULU', name: 'Gem Traders', level: 1, members: 10},
+      }),
+    }),
+  )
+  assert.ok(!kinds(decision.effects).includes('report'))
+})
+
+test('the same term outside the clan name is still caught', async () => {
+  const decision = await decide(
+    facts({
+      title: '[Recruiting] Gem Traders | #29LRRULU | TH18',
+      body: 'Selling accounts, message me.',
+    }),
+    deps({
+      resolveClan: async () => ({
+        kind: 'found',
+        clan: {tag: '#29LRRULU', name: 'Gem Traders', level: 1, members: 10},
+      }),
+    }),
+  )
+  const report = decision.effects.find(e => e.kind === 'report')
+  assert.equal(
+    report?.kind === 'report' && report.flag.code === 'prohibitedTerms'
+      ? report.flag.terms.join(',')
+      : '',
+    'selling',
+  )
+})
+
+test('searching posts are checked for rule terms too', async () => {
+  const decision = await decide(
+    facts({
+      title: '[Searching] TH12 | 150 | SomeIGN',
+      body: 'Will pay gems for a good clan.',
+    }),
+    deps(),
+  )
+  assert.ok(kinds(decision.effects).includes('report'))
+})
+
+test('an ordinary post triggers nothing', async () => {
+  const decision = await decide(facts(), deps())
+  assert.ok(!kinds(decision.effects).includes('report'))
 })

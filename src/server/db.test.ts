@@ -27,6 +27,8 @@ import {
   recordPost,
   removeWeirdClan,
   seedPosts,
+  setNoticeComment,
+  setTracked,
 } from './db.ts'
 
 const NOW = 1787621949444
@@ -257,4 +259,52 @@ test('seeds history in bulk', async () => {
 
   assert.equal((await lastTrackedPostForClan(TAG))?.postId, '1vxm5ep')
   assert.equal((await lastTrackedPostForAuthor('TubaKid44'))?.postId, '1vxm5eq')
+})
+
+// --- moderator corrections ---
+
+test('setTracked reports what it did without touching absent posts', async () => {
+  assert.equal(await setTracked('t3_never_seen', true), 'unknown')
+
+  await post({postId: 't3_1vxm5ep', tracked: true})
+  assert.equal(await setTracked('t3_1vxm5ep', true), 'unchanged')
+  assert.equal(await setTracked('t3_1vxm5ep', false), 'changed')
+})
+
+test('untracking leaves the author in the active index for the pruner', async () => {
+  // activeAuthors is the only handle pruneOlderThan has on tracked:author:*
+  // keys. Dropping the author here would strand the set with nothing left to
+  // iterate it, so it leaks past retention forever.
+  await post({postId: 't3_1vxm5ep', tracked: true})
+  await setTracked('t3_1vxm5ep', false)
+
+  assert.equal(await lastTrackedPostForAuthor('someone'), undefined)
+  assert.deepEqual(await activeClanTagsSince(0), [TAG])
+  assert.equal(
+    (await redis.zScore(KEY.activeAuthors, 'someone')) != null,
+    true,
+    'still reachable by the pruner',
+  )
+})
+
+test('a post survives an untrack-then-retrack round trip intact', async () => {
+  await post({postId: 't3_1vxm5ep', tracked: true})
+  await setTracked('t3_1vxm5ep', false)
+  await setTracked('t3_1vxm5ep', true)
+
+  const back = await getPost('t3_1vxm5ep')
+  assert.equal(back?.tracked, true)
+  assert.deepEqual(await lastTrackedPostForClan(TAG), {
+    postId: '1vxm5ep',
+    created: NOW,
+  })
+})
+
+test('the notice comment id is preserved by a later record', async () => {
+  // setNoticeComment runs while the removal is being executed, before the
+  // record effect. hSet merges, so the record must not wipe it.
+  await setNoticeComment('t3_1vxm5ep', 't1_notice')
+  await post({postId: 't3_1vxm5ep', tracked: false})
+
+  assert.equal((await getPost('t3_1vxm5ep'))?.noticeCommentId, 't1_notice')
 })

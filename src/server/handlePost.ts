@@ -10,6 +10,7 @@ import {
   markAuthorKnown,
   markClanKnown,
   recordPost,
+  setNoticeComment,
 } from './db.ts'
 import {decide, type Effect, type PostFacts} from './decide.ts'
 import {notifyMods, type PostRef} from './discord.ts'
@@ -41,6 +42,7 @@ export async function handlePostCreate(
   const post: PostFacts = {
     postId: event.post.id,
     title: event.post.title,
+    body: event.post.selftext ?? '',
     author: event.author?.name,
     createdAt: event.post.createdAt,
     url: absoluteUrl(event.post.permalink),
@@ -86,9 +88,24 @@ async function apply(
     case 'remove': {
       if (!options.observeOnly) {
         await removePost(post.postId)
-        if (post.author != null) await sendNotice(effect.notice, target)
+        if (post.author != null) {
+          const sent = await sendNotice(effect.notice, target)
+          // Stored before the `record` effect runs. hSet merges, so the record
+          // that follows adds to this rather than overwriting it.
+          if (sent.commentId != null) {
+            await setNoticeComment(post.postId, sent.commentId)
+          }
+        }
       }
-      await notifyMods({kind: 'removed', post: ref, reason: effect.reason})
+      await notifyMods({
+        kind: 'removed',
+        post: ref,
+        clan:
+          effect.clan == null
+            ? undefined
+            : {tag: effect.clan.tag, name: effect.clan.name},
+        reason: effect.reason,
+      })
       return
     }
 

@@ -34,6 +34,21 @@ export type TriggerPost = {
   deleted: boolean
 }
 
+/**
+ * Fired for every moderator action on the subreddit, ours included.
+ *
+ * `action` is Reddit's internal string — `approvelink`, `removelink`,
+ * `spamlink` for posts, and a long tail of comment, flair, ban and setting
+ * actions the bot ignores. `targetPost` is absent for all of those.
+ */
+export type ModActionEvent = {
+  type: 'ModAction'
+  action?: string
+  moderator?: {id: string; name: string}
+  targetPost?: {id: string; title?: string; authorId?: string}
+  subreddit?: TriggerSubreddit
+}
+
 export type TriggerAuthor = {
   id: string
   name: string

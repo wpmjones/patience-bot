@@ -96,11 +96,34 @@ test('a flag says plainly that nothing was removed', () => {
     kind: 'flagged',
     post: POST,
     clan: CLAN,
-    reason: {code: 'missingClanName'},
+    reason: {code: 'prohibitedTerms', terms: ['gems', 'selling']},
   })
   const embed = (payload.embeds as {title: string; description: string}[])[0]
   assert.equal(embed?.title, 'Needs a look')
   assert.match(String(embed?.description), /\*\*Not removed\*\*/)
+})
+
+test('a clan name mismatch reads as a removal and names the clan', () => {
+  const payload = buildPayload({
+    kind: 'removed',
+    post: POST,
+    clan: CLAN,
+    reason: {code: 'clanNameMismatch', clanName: 'Black Water'},
+  })
+  const embed = (
+    payload.embeds as {
+      title: string
+      description: string
+      fields: {name: string; value: string}[]
+    }[]
+  )[0]
+  assert.equal(embed?.title, 'Post removed')
+  assert.match(String(embed?.description), /\*\*Removed\.\*\*/)
+  assert.match(String(embed?.description), /Black Water/)
+  assert.equal(
+    embed?.fields.find(f => f.name === 'Expected clan name')?.value,
+    'Black Water',
+  )
 })
 
 test('only an alert is allowed to ping the channel', () => {

@@ -43,6 +43,7 @@ export type AuthorNotice =
   | {kind: 'missingCategory'}
   | {kind: 'unknownCategory'; raw: string}
   | {kind: 'badClanTag'}
+  | {kind: 'clanNameMismatch'; clanName: string}
   | {kind: 'missingTownHall'}
   | {kind: 'welcome'}
 
@@ -121,6 +122,22 @@ export function buildNotice(notice: AuthorNotice): NoticeText {
           'O is really a zero.',
       })
 
+    case 'clanNameMismatch':
+      return removal({
+        subject: "Your post was removed — clan name couldn't be confirmed",
+        why:
+          "Your post has been removed because we couldn't confirm that the " +
+          'clan name in your title belongs to the clan tag you gave. The tag ' +
+          `resolves to **${notice.clanName}**, which does not appear in your ` +
+          'title.',
+        fix:
+          'This is most often one of three things: a **player** tag used ' +
+          'where a **clan** tag belongs, a clan name left out of the title, ' +
+          'or a clan name that is mistyped. Your clan name has to appear ' +
+          'exactly as it does in game, including spacing and any special ' +
+          'characters. You can post again today once the title is corrected.',
+      })
+
     case 'missingTownHall':
       return removal({
         subject: 'Your post was removed — Town Hall level missing',
@@ -193,10 +210,11 @@ function removal(parts: {
 export async function sendNotice(
   notice: AuthorNotice,
   target: {postId: string; author: string; subredditName: string},
-): Promise<{commented: boolean; messaged: boolean}> {
+): Promise<{commented: boolean; messaged: boolean; commentId?: string}> {
   const text = buildNotice(notice)
 
   let commented = false
+  let commentId: string | undefined
   if (text.comment != null) {
     try {
       const comment = await reddit.submitComment({
@@ -205,6 +223,8 @@ export async function sendNotice(
       })
       await comment.distinguish(false)
       commented = true
+      // Kept so the comment can be withdrawn if a moderator approves the post.
+      commentId = comment.id
     } catch (err) {
       console.error(
         `[notice] comment failed on ${target.postId}; ${errText(err)}`,
@@ -230,7 +250,7 @@ export async function sendNotice(
     }
   }
 
-  return {commented, messaged}
+  return {commented, messaged, commentId}
 }
 
 function errText(err: unknown): string {

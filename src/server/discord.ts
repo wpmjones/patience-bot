@@ -42,9 +42,10 @@ export type RemovalReason =
   | {code: 'missingCategory'}
   | {code: 'unknownCategory'; raw: string}
   | {code: 'badClanTag'; tried: readonly string[]}
+  | {code: 'clanNameMismatch'; clanName: string}
   | {code: 'missingTownHall'}
 
-export type FlagReason = {code: 'missingClanName'}
+export type FlagReason = {code: 'prohibitedTerms'; terms: readonly string[]}
 
 export type ModEvent =
   | {
@@ -226,6 +227,17 @@ function describeRemoval(reason: RemovalReason): {
           },
         ],
       }
+    case 'clanNameMismatch':
+      return {
+        description:
+          `The title does not contain **${reason.clanName}**, the name of the ` +
+          'clan its tag resolves to, and this clan is not on the exempt list. ' +
+          '**Removed.** Usually a player tag used in place of a clan tag, or ' +
+          'a name that is missing or mistyped.',
+        extra: [
+          {name: 'Expected clan name', value: reason.clanName, inline: true},
+        ],
+      }
     case 'missingTownHall':
       return {
         description:
@@ -242,17 +254,22 @@ function describeFlag(reason: FlagReason): {
   description: string
   extra: EmbedField[]
 } {
-  // Only one flag reason so far. When a second is added, turn this into a
-  // switch with the same `satisfies never` guard describeRemoval uses — that
-  // check only narrows across a real union, so it cannot be used yet.
+  // Back to a single flag reason, so `satisfies never` cannot be used here —
+  // it only narrows across a real union. Restore the guard if a second lands.
   switch (reason.code) {
-    case 'missingClanName':
+    case 'prohibitedTerms':
       return {
         description:
-          "The clan's in-game name does not appear in the post title, and " +
-          'this clan is not on the exempt list. **Not removed** — please ' +
-          'check whether the title is wrong or the clan should be exempted.',
-        extra: [],
+          'This post mentions terms covered by the no-buying/selling/trading ' +
+          'rule. **Not removed** — the words have innocent uses, so this ' +
+          'needs a human read. Anything inside the clan name was ignored.',
+        extra: [
+          {
+            name: 'Terms found',
+            value: reason.terms.join(', '),
+            inline: true,
+          },
+        ],
       }
   }
 }

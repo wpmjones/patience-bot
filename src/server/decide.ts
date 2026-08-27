@@ -3,10 +3,12 @@ import {
   CLAN_CATEGORIES,
   extractClanTagCandidates,
   extractTownHallLevel,
+  findProhibitedTerms,
   formatTimeRemaining,
   parseCategory,
   titleContainsClanName,
   titleSpellsTagCorrectly,
+  typedSpellingOf,
 } from '../shared/parse.ts'
 import type {AuthorNotice} from './authorNotice.ts'
 import type {Clan, ClanLookup, ClanResolution} from './coc.ts'
@@ -25,6 +27,8 @@ import type {FlagReason, RemovalReason} from './discord.ts'
 export type PostFacts = {
   postId: string
   title: string
+  /** Post body. Searched for rule terms alongside the title. */
+  body: string
   /** Absent when the account is deleted. */
   author?: string
   createdAt: number
@@ -47,7 +51,7 @@ export type TrackedPost = {postId: string; created: number}
 
 export type Effect =
   /** Remove the post, comment, and message the author. */
-  | {kind: 'remove'; reason: RemovalReason; notice: AuthorNotice}
+  | {kind: 'remove'; reason: RemovalReason; notice: AuthorNotice; clan?: Clan}
   /** Send to the mod queue without hiding it. */
   | {kind: 'report'; reason: string; flag: FlagReason; clan?: Clan}
   /** Comment (and maybe message) without any moderation action. */
@@ -133,6 +137,24 @@ async function decideClanPost(
   }
 
   const clan = resolution.clan
+
+  // Checked before the cooldown so a corrected repost is not also blocked by
+  // the post it is correcting — a removal never holds the clan's weekly slot.
+  const nameConfirmed =
+    titleContainsClanName(clan.name, post.title) ||
+    (await deps.isWeirdClan(clan.tag))
+
+  if (!nameConfirmed) {
+    return removeFor(
+      post,
+      {code: 'clanNameMismatch', clanName: clan.name},
+      {kind: 'clanNameMismatch', clanName: clan.name},
+      category,
+      clan.tag,
+      clan,
+    )
+  }
+
   const last = await deps.lastTrackedForClan(clan.tag)
   const cooldown = checkCooldown(last, post.createdAt, deps.now)
 
@@ -167,22 +189,12 @@ async function decideClanPost(
   ]
   const notes: string[] = []
 
-  const nameMissing =
-    !titleContainsClanName(clan.name, post.title) &&
-    !(await deps.isWeirdClan(clan.tag))
-
-  if (nameMissing) {
-    effects.push({
-      kind: 'report',
-      reason: `Clan name "${clan.name}" not found in title`,
-      flag: {code: 'missingClanName'},
-      clan,
-    })
-    notes.push('clan name missing from title, reported')
-  } else if (!titleSpellsTagCorrectly(post.title, clan.tag)) {
-    // Only worth mentioning when the title is otherwise fine — a post already
-    // in the mod queue does not need a pedantic note about a letter O.
-    const typed = candidates[0] ?? clan.tag
+  // `typedSpellingOf` rather than the candidate list: candidates are already
+  // normalised, so quoting one back would print the right tag twice and tell
+  // the author nothing. Undefined means the tag was rescued rather than
+  // repaired, and there is no author spelling worth quoting.
+  const typed = typedSpellingOf(post.title, clan.tag)
+  if (!titleSpellsTagCorrectly(post.title, clan.tag) && typed != null) {
     effects.push({
       kind: 'notice',
       notice: {
@@ -193,6 +205,12 @@ async function decideClanPost(
       },
     })
     notes.push('tag repaired, commented')
+  }
+
+  const prohibited = checkProhibited(post, clan.name)
+  if (prohibited != null) {
+    effects.push(prohibited.effect)
+    notes.push(prohibited.note)
   }
 
   if (await isNewAuthor(post, deps)) {
@@ -269,6 +287,12 @@ async function decideAuthorPost(
   ]
   const notes: string[] = []
 
+  const prohibited = checkProhibited(post)
+  if (prohibited != null) {
+    effects.push(prohibited.effect)
+    notes.push(prohibited.note)
+  }
+
   if (await isNewAuthor(post, deps)) {
     effects.push({kind: 'notice', notice: {kind: 'welcome'}})
     notes.push('welcomed')
@@ -277,6 +301,29 @@ async function decideAuthorPost(
   return {
     effects,
     summary: `accepted ${category} from u/${post.author}${notes.length > 0 ? ` (${notes.join(', ')})` : ''}`,
+  }
+}
+
+/**
+ * Rule terms found in the title or body, excluding the clan's own name.
+ *
+ * Never removes: "gems" appears innocently in most recruiting posts and no
+ * word list can tell "we gem the war" from selling them. A moderator can.
+ */
+function checkProhibited(
+  post: PostFacts,
+  clanName?: string,
+): {effect: Effect; note: string} | undefined {
+  const terms = findProhibitedTerms(`${post.title}\n${post.body}`, clanName)
+  if (terms.length === 0) return undefined
+
+  return {
+    effect: {
+      kind: 'report',
+      reason: `Possible rule 4 breach: ${terms.join(', ')}`,
+      flag: {code: 'prohibitedTerms', terms},
+    },
+    note: `rule terms (${terms.join(', ')}), reported`,
   }
 }
 
@@ -317,10 +364,11 @@ function removeFor(
   notice: AuthorNotice,
   category?: PostRecord['category'],
   clanTag?: string,
+  clan?: Clan,
 ): Decision {
   return {
     effects: [
-      {kind: 'remove', reason, notice},
+      {kind: 'remove', reason, notice, clan},
       {
         kind: 'record',
         record: {

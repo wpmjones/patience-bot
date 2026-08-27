@@ -47,6 +47,14 @@ export type PostRecord = {
   author?: string
   /** False for removed posts: recorded, but not starting a new cooldown. */
   tracked: boolean
+  /**
+   * Fullname of the removal comment the bot left, when it left one.
+   *
+   * Kept so the comment can be deleted if a moderator later approves the post.
+   * Otherwise an approved post carries a distinguished bot comment underneath
+   * still announcing that it was removed.
+   */
+  noticeCommentId?: string
 }
 
 /** Cooldown between posts for the same clan or author. */
@@ -95,6 +103,8 @@ export async function recordPost(record: PostRecord): Promise<void> {
   }
   if (record.clanTag != null) fields.clanTag = record.clanTag
   if (record.author != null) fields.author = record.author
+  if (record.noticeCommentId != null)
+    fields.noticeCommentId = record.noticeCommentId
 
   await redis.hSet(KEY.post(id), fields)
   await redis.expire(KEY.post(id), RETENTION_SECONDS)
@@ -138,7 +148,85 @@ export async function getPost(postId: string): Promise<PostRecord | undefined> {
     clanTag: hash.clanTag,
     author: hash.author,
     tracked: hash.tracked === '1',
+    noticeCommentId: hash.noticeCommentId,
   }
+}
+
+/**
+ * Remember which comment the bot left announcing a removal.
+ *
+ * Written before the post record itself exists, so this is a field-level hSet
+ * rather than part of recordPost — hSet merges, so the record that follows adds
+ * to it rather than replacing it.
+ */
+export async function setNoticeComment(
+  postId: string,
+  commentId: string,
+): Promise<void> {
+  await redis.hSet(KEY.post(postId), {noticeCommentId: commentId})
+}
+
+export type TrackChange = 'changed' | 'unchanged' | 'unknown'
+
+/**
+ * Move a post into or out of the cooldown-eligible sets after the fact.
+ *
+ * Moderators overrule the bot in both directions, and until the record follows
+ * them the bot is enforcing a subreddit that no longer exists. An approved post
+ * is publicly visible but, left untracked, holds none of its clan's weekly
+ * slot — so the clan posts again two days later and sails straight through. A
+ * moderator-removed post is the mirror image: it keeps holding a slot for a
+ * post nobody can see, and the author's corrected repost is refused on account
+ * of it.
+ *
+ * The original creation time is reused as the score rather than the moment of
+ * approval, so the week runs from when the post went up.
+ *
+ * Returns `unknown` for a post with no record — one the bot never saw, or one
+ * already aged out of the retention window. Neither is an error; there is
+ * simply nothing to correct.
+ */
+export async function setTracked(
+  postId: string,
+  tracked: boolean,
+): Promise<TrackChange> {
+  const record = await getPost(postId)
+  if (record == null) return 'unknown'
+  if (record.tracked === tracked) return 'unchanged'
+
+  const id = barePostId(postId)
+  await redis.hSet(KEY.post(id), {tracked: tracked ? '1' : '0'})
+
+  if (record.clanTag != null) {
+    if (tracked) {
+      await redis.zAdd(KEY.trackedByTag(record.clanTag), {
+        score: record.created,
+        member: id,
+      })
+    } else {
+      await redis.zRem(KEY.trackedByTag(record.clanTag), [id])
+    }
+  }
+
+  if (record.author != null) {
+    if (tracked) {
+      await redis.zAdd(KEY.trackedByAuthor(record.author), {
+        score: record.created,
+        member: id,
+      })
+      await redis.zAdd(KEY.activeAuthors, {
+        score: record.created,
+        member: record.author.toLowerCase(),
+      })
+    } else {
+      await redis.zRem(KEY.trackedByAuthor(record.author), [id])
+      // activeAuthors is deliberately left alone. It is the only handle the
+      // pruner has on `tracked:author:*` keys, so dropping an author here
+      // would strand their sorted set with nothing left to iterate it.
+    }
+  }
+
+  return 'changed'
 }
 
 type Entry = {postId: string; created: number}
